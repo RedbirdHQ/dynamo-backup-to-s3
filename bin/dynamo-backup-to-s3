@@ -21,7 +21,9 @@ program
     .option('-b, --bucket <name>', 'S3 bucket to store backups')
     .option('-a, --acl <acl>', 'The canned ACL to apply to the object')
     .option('-s, --stop-on-failure', 'specify the reporter to use', parseBool, true)
+    .option('-c, --consistent-read', 'Enable "strongly consistent" reads, uses 2x more read capacities than "evantually consistent"')
     .option('-r, --read-percentage <decimal>', 'specific the percentage of Dynamo read capacity to use while backing up. default .25 (25%)', parseFloat, .25)
+    .option('-m, --max-minutes-per-table <float>', 'The maximum time in minutes we want to backup one table (±10%)', parseFloat)
     .option('-x, --excluded-tables <list>', 'exclude these tables from backup', list)
     .option('-i, --included-tables <list>', 'only backup these tables', list)
     .option('-p, --backup-path <name>', 'backup path to store table dumps in. default is DynamoDB-backup-YYYY-MM-DD-HH-mm-ss')
@@ -47,18 +49,23 @@ var dynamoBackup = new DynamoBackup({
     excludedTables: program.excludedTables,
     includedTables: program.includedTables,
     readPercentage: program.readPercentage,
+    consistentRead: program.consistentRead,
+    maxMinutesPerTable: program.maxMinutesPerTable,
     stopOnFailure: program.stopOnFailure,
     base64Binary: program.base64EncodeBinary,
     saveDataPipelineFormat: program.saveDataPipelineFormat,
     serverSideEncryption: program.serverSideEncryption,
 });
 
-dynamoBackup.on('error', function(data) {
-    console.log('Error backing up ' + data.tableName);
-    console.log(data.error);
+dynamoBackup.on('error', function(tableName, error) {
+    console.log('Error backing up %s', tableName);
+    console.log(error);
     if (program.stopOnFailure) {
         process.exit(-1);
     }
+});
+dynamoBackup.on('warning', function(tableName, message) {
+    console.log('Warning on %s: %s', tableName, message);
 });
 
 dynamoBackup.on('start-backup', function(tableName) {
@@ -75,4 +82,12 @@ dynamoBackup.on('end-backup', function(tableName) {
 dynamoBackup.backupAllTables(function() {
     console.log('Finished backing up DynamoDB');
     process.exit(0);
+});
+
+process.on('SIGINT', function() {
+  console.log('Restoring original capacities before exit');
+  dynamoBackup.restoreOriginalCapacities(function(){
+    console.log('Original capacities restored');
+    process.exit();
+  });
 });
